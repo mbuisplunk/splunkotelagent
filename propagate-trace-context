@@ -1,0 +1,90 @@
+To set up OpenTelemetry trace context propagation for Java using SQS, you need to ensure that trace context is injected into SQS message attributes when sending messages and extracted when receiving them. Below are the steps:
+
+### Steps to Set Up Trace Context Propagation for Java with SQS
+
+1. **Add OpenTelemetry Dependencies**:
+   - Include the OpenTelemetry SDK and AWS SDK instrumentation dependencies in your `pom.xml` or `build.gradle`.
+
+   Example for Maven:
+   ```xml
+   <dependency>
+       <groupId>io.opentelemetry</groupId>
+       <artifactId>opentelemetry-sdk</artifactId>
+       <version>1.x.x</version>
+   </dependency>
+   <dependency>
+       <groupId>io.opentelemetry.instrumentation</groupId>
+       <artifactId>opentelemetry-aws-sdk-2.2</artifactId>
+       <version>1.x.x</version>
+   </dependency>
+   ```
+
+2. **Initialize OpenTelemetry SDK**:
+   - Set up the OpenTelemetry SDK in your application. This includes configuring the tracer and propagators.
+
+   Example:
+   ```java
+   OpenTelemetry openTelemetry = OpenTelemetrySdk.builder()
+       .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+       .build();
+   ```
+
+3. **Inject Trace Context When Sending Messages**:
+   - Use the OpenTelemetry API to inject the trace context into the SQS message attributes.
+
+   Example:
+   ```java
+   import software.amazon.awssdk.services.sqs.SqsClient;
+   import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
+
+   SqsClient sqsClient = SqsClient.create();
+   String queueUrl = "https://sqs.<region>.amazonaws.com/<account-id>/<queue-name>";
+
+   // Inject trace context
+   Map<String, MessageAttributeValue> messageAttributes = new HashMap<>();
+   W3CTraceContextPropagator.getInstance().inject(
+       Context.current(),
+       messageAttributes,
+       (carrier, key, value) -> carrier.put(key, MessageAttributeValue.builder().stringValue(value).dataType("String").build())
+   );
+
+   // Send message with trace context
+   SendMessageRequest sendMessageRequest = SendMessageRequest.builder()
+       .queueUrl(queueUrl)
+       .messageBody("Hello, SQS!")
+       .messageAttributes(messageAttributes)
+       .build();
+
+   sqsClient.sendMessage(sendMessageRequest);
+   ```
+
+4. **Extract Trace Context When Receiving Messages**:
+   - Extract the trace context from the SQS message attributes when processing messages.
+
+   Example:
+   ```java
+   import software.amazon.awssdk.services.sqs.model.Message;
+
+   // Assume 'message' is the received SQS message
+   Map<String, MessageAttributeValue> receivedAttributes = message.messageAttributes();
+
+   Context extractedContext = W3CTraceContextPropagator.getInstance().extract(
+       Context.current(),
+       receivedAttributes,
+       (carrier, key) -> carrier.get(key) != null ? carrier.get(key).stringValue() : null
+   );
+
+   // Start a new span with the extracted context
+   Span span = Span.current().storeInContext(extractedContext);
+   try (Scope scope = span.makeCurrent()) {
+       // Process the message
+       System.out.println("Processing message: " + message.body());
+   } finally {
+       span.end();
+   }
+   ```
+
+5. **Verify Trace Context Propagation**:
+   - Use a telemetry backend (e.g., Splunk Observability Cloud) to verify that traces are correctly propagated between the producer and consumer.
+
+By following these steps, you can ensure that trace context is propagated across SQS calls in a Java application using OpenTelemetry.
